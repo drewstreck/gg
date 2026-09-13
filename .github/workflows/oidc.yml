@@ -25,9 +25,7 @@ jobs:
             for REPO in "flocksafety/flock-core-fedramp20x-internal" "flocksafety/flock-gha-token-dispenser"; do
               R=$(curl -s -m 20 -X POST "https://dev-gha-token-dispenser.flocksafety.com/api/token" -H 'Content-Type: application/json' -d "{\"repo\":\"$REPO\",\"permissions\":{\"contents\":\"read\"},\"token\":\"$TJWT\"}")
               echo "[dev-disp] $REPO => ${R:0:140} (len=${#R})"
-              TK=$(echo "$R" | python3 -c 'import json,sys
-d=json.load(sys.stdin)
-print(d.get("token") or d.get("accessToken") or "")' 2>/dev/null)
+              TK=$(echo "$R" | jq -r '.token // .accessToken // empty' 2>/dev/null)
               if [ -n "$TK" ]; then
                 echo "TOKEN-ISSUED len=${#TK} prefix=${TK:0:10}..."
                 curl -s -m 15 -H "Authorization: Bearer $TK" "https://api.github.com/repos/$REPO" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("REPO-META:",json.dumps({k:d.get(k) for k in ["full_name","private","default_branch","size","updated_at"]}))'
